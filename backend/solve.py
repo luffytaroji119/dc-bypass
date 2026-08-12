@@ -42,6 +42,7 @@ class Step:
     userid: Optional[str] = None
     title: Optional[str] = None
     count: Optional[int] = None
+    code: Optional[str] = None
 
     def as_sse(self) -> str:
         import json
@@ -197,7 +198,7 @@ async def solve_stream(
             return
 
         if r_get.status_code != 200:
-            yield Step("error", f"Verify page returned HTTP {r_get.status_code}. Link may be dead.")
+            yield Step("error", f"Verify page returned HTTP {r_get.status_code}. Link may be dead.", code="dead_link")
             return
 
         page = r_get.text
@@ -205,7 +206,7 @@ async def solve_stream(
         title = title_match.group(1).strip() if title_match else ""
 
         if any(m in title.lower() for m in DEAD_MARKERS):
-            yield Step("error", f"Link is dead: {title!r}. Generate a fresh link.")
+            yield Step("error", f"Link is dead: {title!r}. Generate a fresh link.", code="dead_link")
             return
 
         if "cf-turnstile" not in page.lower() and "data-sitekey" not in page.lower():

@@ -34,7 +34,7 @@ type Status =
 type SolveEvent =
   | { step: "queued" | "loading" | "solving" | "verifying"; message: string }
   | { step: "done"; success: boolean; message?: string; userid?: string; count?: number }
-  | { step: "error"; message: string };
+  | { step: "error"; message: string; code?: string };
 
 function toFullUrl(input: string): string | null {
   const v = input.trim();
@@ -109,7 +109,7 @@ function Index() {
       } else if (data.step === "error") {
         doneRef.current = true;
         closeStream();
-        setStatus({ kind: "error", message: "Something went wrong." });
+        setStatus({ kind: "error", message: data.code === "dead_link" ? "Link is dead or expired. Generate a fresh link." : "Something went wrong." });
       }
     };
 
