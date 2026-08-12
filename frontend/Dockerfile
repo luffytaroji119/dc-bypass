@@ -9,7 +9,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # Build as a standalone Node server (not Cloudflare) so it runs on Railway
-ENV NITRO_PRESET=node-server
+ARG NITRO_PRESET=node-server
+ENV NITRO_PRESET=$NITRO_PRESET
+ARG VITE_API_BASE
+ENV VITE_API_BASE=$VITE_API_BASE
 RUN npm run build
 
 FROM node:20-slim AS runner
