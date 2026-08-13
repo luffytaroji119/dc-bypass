@@ -11,6 +11,7 @@ Env vars:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -20,6 +21,8 @@ from fastapi.responses import StreamingResponse, JSONResponse
 
 import counter
 from solve import solve_stream, Step
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s: %(message)s")
 
 
 SOLVER_URL = os.environ.get("SOLVER_URL", "http://localhost:6767")
