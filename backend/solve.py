@@ -281,5 +281,11 @@ async def solve_stream(
                 msg = f"Partial success (userid {userid}) but verification incomplete."
             else:
                 msg = f"Verification failed: {post_title or 'Access denied'}"
-            logger.info("link=%s result=fail reason=%s userid=%s title=%r", link, "partial" if userid else "denied", userid, post_title)
+            set_cookie = r_post.headers.get("set-cookie", "")
+            body_snippet = r_post.text[:500].replace("\n", " ").strip()
+            logger.info(
+                "link=%s result=fail reason=%s userid=%s title=%r status=%d set_cookie=%r body=%r",
+                link, "partial" if userid else "denied", userid, post_title,
+                r_post.status_code, set_cookie[:200], body_snippet,
+            )
             yield Step("done", msg, success=False, userid=userid, title=post_title)
