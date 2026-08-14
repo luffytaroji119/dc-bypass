@@ -52,6 +52,8 @@ function errorForCode(code?: string): string {
       return "Link is dead or expired. Generate a fresh link.";
     case "timed_out":
       return "Timed out, Please Try Again";
+    case "verification_failed":
+      return "Account Blacklisted";
     default:
       return "Something went wrong.";
   }

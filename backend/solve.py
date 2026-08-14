@@ -320,10 +320,11 @@ async def solve_stream(
                 msg = f"Verification failed: {post_title or 'Access denied'}"
             fail_code = "timed_out" if post_title and "timed out" in post_title.lower() else "verification_failed"
             set_cookie = r_post.headers.get("set-cookie", "")
-            body_snippet = r_post.text[:500].replace("\n", " ").strip()
+            body_snippet = r_post.text[:2000].replace("\n", " ").strip()
+            all_headers = dict(r_post.headers)
             logger.info(
-                "link=%s result=fail reason=%s userid=%s title=%r status=%d set_cookie=%r body=%r",
+                "link=%s result=fail reason=%s userid=%s title=%r status=%d set_cookie=%r headers=%r body=%r",
                 link, "partial" if userid else "denied", userid, post_title,
-                r_post.status_code, set_cookie[:200], body_snippet,
+                r_post.status_code, set_cookie[:200], all_headers, body_snippet,
             )
             yield Step("done", msg, success=False, userid=userid, title=post_title, code=fail_code)
