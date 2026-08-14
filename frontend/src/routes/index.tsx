@@ -33,7 +33,7 @@ type Status =
 
 type SolveEvent =
   | { step: "queued" | "loading" | "solving" | "verifying"; message: string }
-  | { step: "done"; success: boolean; message?: string; userid?: string; count?: number }
+  | { step: "done"; success: boolean; message?: string; userid?: string; count?: number; code?: string }
   | { step: "error"; message: string; code?: string };
 
 function toFullUrl(input: string): string | null {
@@ -44,6 +44,17 @@ function toFullUrl(input: string): string | null {
   const code = v.includes("/") ? v.split("/").filter(Boolean).pop() ?? "" : v;
   if (/^[A-Za-z0-9_-]{4,}$/.test(code)) return `https://beta.doublecounter.gg/v/${code}`;
   return null;
+}
+
+function errorForCode(code?: string): string {
+  switch (code) {
+    case "dead_link":
+      return "Link is dead or expired. Generate a fresh link.";
+    case "timed_out":
+      return "Timed out, Please Try Again";
+    default:
+      return "Something went wrong.";
+  }
 }
 
 function Index() {
@@ -104,12 +115,12 @@ function Index() {
           if (typeof data.count === "number") setCount(data.count);
           setStatus({ kind: "ok", message: "VERIFIED" });
         } else {
-          setStatus({ kind: "error", message: "Something went wrong." });
+          setStatus({ kind: "error", message: errorForCode(data.code) });
         }
       } else if (data.step === "error") {
         doneRef.current = true;
         closeStream();
-        setStatus({ kind: "error", message: data.code === "dead_link" ? "Link is dead or expired. Generate a fresh link." : "Something went wrong." });
+        setStatus({ kind: "error", message: errorForCode(data.code) });
       }
     };
 
@@ -202,7 +213,7 @@ function Index() {
         </div>
 
         <div className="mt-10 border-t border-border pt-5 text-center text-sm text-muted-foreground">
-          Made by <span className="font-medium text-foreground">Velorsi</span>
+          Made by <a href="https://discord.com/users/1464228835435479284" target="_blank" rel="noopener noreferrer" className="font-medium text-foreground transition-opacity hover:opacity-70">Velorsi</a>
         </div>
       </section>
     </main>

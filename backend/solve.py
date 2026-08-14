@@ -29,7 +29,10 @@ UA = (
 
 CONNECT_TIMEOUT = 15.0
 READ_TIMEOUT = 45.0
-SOLVER_READ_TIMEOUT = 180.0
+SOLVER_READ_TIMEOUT = 60.0
+
+MAX_PROXY_RETRIES = 3
+PROXY_RETRY_BACKOFF = 2.0
 
 DEAD_MARKERS = (
     "timed out", "expired", "already", "no longer",
@@ -172,8 +175,8 @@ async def solve_stream(
     solver_url: str,
     proxy_url: str,
     solver_nav_timeout_ms: int = 60000,
-    max_solver_attempts: int = 5,
-    solver_backoff: float = 3.0,
+    max_solver_attempts: int = 3,
+    solver_backoff: float = 2.0,
 ) -> AsyncIterator[Step]:
     """Yield Step events for the full verification flow."""
     try:
@@ -187,22 +190,29 @@ async def solve_stream(
     timeout = httpx.Timeout(CONNECT_TIMEOUT, read=READ_TIMEOUT)
 
     async with httpx.AsyncClient(proxy=proxy, follow_redirects=True, timeout=timeout) as client:
-        # ---- Step 1: GET verify page ----
+        # ---- Step 1: GET verify page (with proxy retry) ----
         yield Step("loading", "Loading verify page...")
-        try:
-            r_get = await client.get(full, headers=get_headers(base))
-        except httpx.ProxyError as e:
-            logger.info("link=%s result=error reason=proxy_error phase=GET", link)
-            yield Step("error", f"Proxy error: {e}")
-            return
-        except (httpx.ConnectTimeout, httpx.ReadTimeout):
-            logger.info("link=%s result=error reason=timeout phase=GET", link)
-            yield Step("error", "Request timed out via proxy.")
-            return
-        except httpx.HTTPError as e:
-            logger.info("link=%s result=error reason=connection_error phase=GET", link)
-            yield Step("error", f"Connection error: {e}")
-            return
+        r_get = None
+        for proxy_attempt in range(1, MAX_PROXY_RETRIES + 1):
+            try:
+                r_get = await client.get(full, headers=get_headers(base))
+                break
+            except httpx.ProxyError as e:
+                if proxy_attempt < MAX_PROXY_RETRIES:
+                    logger.info("link=%s proxy_error retry=%d/%d phase=GET", link, proxy_attempt, MAX_PROXY_RETRIES)
+                    await asyncio.sleep(PROXY_RETRY_BACKOFF)
+                else:
+                    logger.info("link=%s result=error reason=proxy_error phase=GET", link)
+                    yield Step("error", "Proxy error. Please try again.", code="proxy_error")
+                    return
+            except (httpx.ConnectTimeout, httpx.ReadTimeout):
+                logger.info("link=%s result=error reason=timeout phase=GET", link)
+                yield Step("error", "Request timed out via proxy.", code="timed_out")
+                return
+            except httpx.HTTPError as e:
+                logger.info("link=%s result=error reason=connection_error phase=GET", link)
+                yield Step("error", f"Connection error: {e}")
+                return
 
         if r_get.status_code != 200:
             logger.info("link=%s result=error reason=dead_link status=%d phase=GET", link, r_get.status_code)
@@ -234,10 +244,30 @@ async def solve_stream(
         yield Step("solving", "Solving Turnstile...")
         token = None
         for attempt in range(1, max_solver_attempts + 1):
-            data = await call_solver(
-                solver_url, full, sitekey, cdata, proxy_url,
-                solver_nav_timeout_ms, client,
-            )
+            try:
+                data = await call_solver(
+                    solver_url, full, sitekey, cdata, proxy_url,
+                    solver_nav_timeout_ms, client,
+                )
+            except httpx.ReadTimeout:
+                if attempt < max_solver_attempts:
+                    logger.info("link=%s solver_timeout retry=%d/%d", link, attempt, max_solver_attempts)
+                    yield Step("solving", f"Solve attempt {attempt} timed out. Retrying...")
+                    await asyncio.sleep(solver_backoff * attempt)
+                    continue
+                logger.info("link=%s result=error reason=solver_timeout", link)
+                yield Step("error", "Solver timed out. Please try again.", code="timed_out")
+                return
+            except httpx.HTTPError as e:
+                if attempt < max_solver_attempts:
+                    logger.info("link=%s solver_http_error retry=%d/%d err=%s", link, attempt, max_solver_attempts, e)
+                    yield Step("solving", f"Solve attempt {attempt} failed: {e}. Retrying...")
+                    await asyncio.sleep(solver_backoff * attempt)
+                    continue
+                logger.info("link=%s result=error reason=solver_failed", link)
+                yield Step("error", f"Solver failed after {max_solver_attempts} attempts: {e}")
+                return
+
             if data.get("success") and data.get("token"):
                 token = data["token"]
                 break
@@ -250,19 +280,26 @@ async def solve_stream(
                 yield Step("error", f"Solver failed after {max_solver_attempts} attempts: {err}")
                 return
 
-        # ---- Step 3: POST the token ----
+        # ---- Step 3: POST the token (with proxy retry) ----
         yield Step("verifying", "Verifying...")
         body = f"cf-turnstile-response={quote(token, safe='')}"
-        try:
-            r_post = await client.post(full, content=body, headers=post_headers(base, full))
-        except httpx.ProxyError as e:
-            logger.info("link=%s result=error reason=proxy_error phase=POST", link)
-            yield Step("error", f"Proxy error on POST: {e}")
-            return
-        except httpx.HTTPError as e:
-            logger.info("link=%s result=error reason=post_failed phase=POST", link)
-            yield Step("error", f"POST failed: {e}")
-            return
+        r_post = None
+        for proxy_attempt in range(1, MAX_PROXY_RETRIES + 1):
+            try:
+                r_post = await client.post(full, content=body, headers=post_headers(base, full))
+                break
+            except httpx.ProxyError as e:
+                if proxy_attempt < MAX_PROXY_RETRIES:
+                    logger.info("link=%s proxy_error retry=%d/%d phase=POST", link, proxy_attempt, MAX_PROXY_RETRIES)
+                    await asyncio.sleep(PROXY_RETRY_BACKOFF)
+                else:
+                    logger.info("link=%s result=error reason=proxy_error phase=POST", link)
+                    yield Step("error", "Proxy error. Please try again.", code="proxy_error")
+                    return
+            except httpx.HTTPError as e:
+                logger.info("link=%s result=error reason=post_failed phase=POST", link)
+                yield Step("error", f"POST failed: {e}")
+                return
 
         userid = parse_userid_cookie(r_post.headers.get("set-cookie", ""))
         post_title = ""
@@ -281,6 +318,7 @@ async def solve_stream(
                 msg = f"Partial success (userid {userid}) but verification incomplete."
             else:
                 msg = f"Verification failed: {post_title or 'Access denied'}"
+            fail_code = "timed_out" if post_title and "timed out" in post_title.lower() else "verification_failed"
             set_cookie = r_post.headers.get("set-cookie", "")
             body_snippet = r_post.text[:500].replace("\n", " ").strip()
             logger.info(
@@ -288,4 +326,4 @@ async def solve_stream(
                 link, "partial" if userid else "denied", userid, post_title,
                 r_post.status_code, set_cookie[:200], body_snippet,
             )
-            yield Step("done", msg, success=False, userid=userid, title=post_title)
+            yield Step("done", msg, success=False, userid=userid, title=post_title, code=fail_code)
